@@ -25,6 +25,7 @@
   you final folder structure would be
   data
     eeg
+      {raw data folder} -> {session} -> {subject_data}.mat
       eeg_raw_data -> 1 -> 1_20160518.mat
       eeg_raw_data -> 1 -> 2_20150915.mat
       eeg_raw_data -> 2 -> 4_20151118.mat

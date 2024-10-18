@@ -33,9 +33,17 @@ def pad_or_truncate_trial(trial, target_length):
         return trial[:, :target_length]
 
 
-# Load and preprocess EEG data for each subject and session
-# Load and preprocess EEG data with variable trial lengths
 def load_and_preprocess_eeg_data(data_dir, subjects, session_labels, target_length, fs=1000):
+    """
+     Load and preprocess EEG data for each subject and session with variable trial lengths
+     sessions 3, subjects 15, trials 24 can vary between sessions
+    :param data_dir:
+    :param subjects:
+    :param session_labels:
+    :param target_length:
+    :param fs:
+    :return:
+    """
     all_data = []
     all_labels = []
 
@@ -45,12 +53,6 @@ def load_and_preprocess_eeg_data(data_dir, subjects, session_labels, target_leng
 
         # Iterate through subjects
         for subject in subjects:
-            # Find the .mat file for the subject in the session folder
-            # session_files = [f for f in os.listdir(session_folder) if
-            #                 f.startswith(f'{subject}_') and f.endswith('.mat')]
-            # if len(session_files) != 1:
-            #    raise ValueError(f"Subject {subject} has multiple or no session files in {session_folder}")
-
             session_files = [f for f in os.listdir(session_folder)]
             session_file = session_files[0]
             session_data = loadmat(os.path.join(session_folder, session_file))
@@ -71,12 +73,86 @@ def load_and_preprocess_eeg_data(data_dir, subjects, session_labels, target_leng
     return np.array(all_data), np.array(all_labels)
 
 
+def load_and_grp_eeg_by_sub(data_dir, subjects, session_labels, target_length, fs=1000):
+    """
+    Loads, preprocesses, and groups EEG data by subject, merging data from multiple sessions.
+
+    Parameters
+    ----------
+    data_dir : str
+        The base directory containing EEG data folders.
+
+    subjects : list,
+        List of subject identifiers.
+
+    session_labels : list of list,
+        List of session labels for each subject, where each entry corresponds to the labels for a session.
+
+    target_length : int
+        The target length to which each EEG trial should be padded or truncated.
+
+    fs : int
+        The sampling frequency of the EEG data.
+
+    Returns
+    -------
+    grouped_data : dict
+        A dictionary where the key is the subject ID and the value is the subject's EEG data.
+
+    grouped_labels : dict
+        A dictionary where the key is the subject ID and the value is the corresponding labels.
+    """
+    grouped_data = {}
+    grouped_labels = {}
+
+    # Iterate through sessions (1, 2, 3)
+    for session_idx in range(3):
+        session_folder = os.path.join(data_dir, str(session_idx + 1))  # Session folders named 1, 2, 3
+
+        # Iterate through subjects
+        for subject in subjects:
+            # Find the .mat file for the subject in the session folder
+            subject_files = [f for f in os.listdir(session_folder)]
+            session_file = subject_files[0]
+            session_data = loadmat(os.path.join(session_folder, session_file))
+
+            # Extract EEG signals
+            eeg_signals = {key: session_data[key] for key in session_data if '_eeg' in key}
+            renamed_signals = {f'eeg_{i + 1}': signal for i, (key, signal) in enumerate(eeg_signals.items())}
+            sorted_signals = [renamed_signals[f'eeg_{i + 1}'] for i in range(24)]  # 24 trials per session
+
+            # Apply bandpass filter and padding/truncating to each trial
+            filtered_trials = [bandpass_filter(trial, 0.5, 50, fs) for trial in sorted_signals]
+            padded_trials = [pad_or_truncate_trial(trial, target_length) for trial in filtered_trials]
+
+            # If the subject has not been added yet, initialize their data and label lists
+            if subject not in grouped_data:
+                grouped_data[subject] = []
+                grouped_labels[subject] = []
+
+            # Append the trials and corresponding labels for this subject and session
+            grouped_data[subject].extend(padded_trials)
+            grouped_labels[subject].extend(session_labels[session_idx])  # Use session_idx to fetch correct labels
+
+    # Convert lists to numpy arrays for easier manipulation
+    for subject in grouped_data:
+        grouped_data[subject] = np.array(grouped_data[subject])
+        grouped_labels[subject] = np.array(grouped_labels[subject])
+
+    return grouped_data, grouped_labels
+
+
 def main():
     # Load EEG data and preprocess
     data_directory = 'data/eeg/eeg_raw_data'
     subjects = range(1, 16)  # 15 subjects (1 to 15)
     target_length = 64  # Max samples based on the new info for SEED-IV
-    eeg_data, labels = load_and_preprocess_eeg_data(data_directory, subjects, get_session_labels(), target_length)
+    grp_data, grp_labels = load_and_grp_eeg_by_sub(data_directory, subjects, get_session_labels(),
+                                                           target_length)
+
+    # Prepare data for LOSO cross-validation
+    eeg_data = np.concatenate([grp_data[subject] for subject in subjects], axis=0)
+    labels = np.concatenate([grp_labels[subject] for subject in subjects], axis=0)
     print(f'EEG Data Shape: {eeg_data.shape}')  # (Total trials, channels, time points)
     print(f'Labels Shape: {labels.shape}')  # (Total trials,)
 

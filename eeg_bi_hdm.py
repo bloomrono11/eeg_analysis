@@ -2,23 +2,53 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, LeaveOneGroupOut
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.utils import compute_class_weight
-from tensorflow.keras import layers, models, optimizers, regularizers
+from tensorflow.keras import layers, models, optimizers, regularizers, callbacks
 from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 
-from eeg_bi_hdm_pre_process import load_and_preprocess_eeg_data
+from eeg_bi_hdm_pre_process import load_and_grp_eeg_by_sub
 from eeg_mat_load import get_session_labels
 
 pre_proc_loc = 'data/pre-processed/eeg/bi_hdm/'
 pre_proc_data_file = 'feature_data.npy'
 pre_proc_label_file = 'feature_label.npy'
+pre_proc_sub_file = 'feature_subject_array.npy'
+
+
+class GradientReversalLayer(layers.Layer):
+    def __init__(self, lambda_):
+        super(GradientReversalLayer, self).__init__()
+        self.lambda_ = lambda_
+
+    @tf.custom_gradient
+    def call(self, inputs):
+        def grad(dy):
+            return -self.lambda_ * dy  # Reverses the gradient
+
+        return inputs, grad
 
 
 def pair_hemispheres(left_lstm, right_lstm):
+    """
+       Perform pairwise operations between left and right hemispheres.
+
+       Parameters
+       ---------
+       left_lstm : tensor
+           LSTM output from the left hemisphere.
+
+       right_lstm : tensor
+           LSTM output from the right hemisphere.
+
+       Returns
+       ------
+       Concatenated tensor of pairwise operations (subtraction, division, multiplication).
+       """
+
     def pairwise_operation(left, right):
         """
             Pairwise operations between left and right hemispheres
@@ -35,42 +65,60 @@ def pair_hemispheres(left_lstm, right_lstm):
     return pairwise_operation(left_lstm, right_lstm)
 
 
-def create_bi_hdm_model_as_paper(input_shape) -> models.Model:
+def create_bi_hdm_model_as_paper(input_shape, lambda_val=1.0) -> models.Model:
     """
-        Creates and define the bi_hdm model
+        Creates the bi_hdm model originally discussed in the paper
         input_shape = ( 62/2, 64) as per paper
         Parameters
         ---------
         input_shape: The nd array of shape (31, 64)
+        lambda_val: float The gradient reversal strength.
 
         Returns
         ------
-        The bi hdm model defined as per paper
+        model: keras.Model
+        The BiHDM model with adversarial domain adaptation.
     """
     # Left hemisphere RNN (horizontal and vertical)
     input_left = layers.Input(shape=input_shape)
-    left_lstm = layers.LSTM(32, return_sequences=True)(input_left)
-    left_lstm = layers.LSTM(32)(left_lstm)
+    left_lstm_h = layers.LSTM(32, return_sequences=False)(input_left)
+    left_lstm_v = layers.LSTM(32, return_sequences=False)(input_left)
 
     # Right hemisphere RNN (horizontal and vertical)
     input_right = layers.Input(shape=input_shape)
-    right_lstm = layers.LSTM(64, return_sequences=True)(input_right)
-    right_lstm = layers.LSTM(32)(right_lstm)
+    right_lstm_h = layers.LSTM(32, return_sequences=False)(input_right)
+    right_lstm_v = layers.LSTM(32, return_sequences=False)(input_right)
 
-    # Flatten the outputs of the horizontal RNNs (which return sequences)
-    # left_lstm = layers.Flatten()(left_lstm)
-    # right_lstm = layers.Flatten()(right_lstm)
+    # Concatenate pairwise results
+    combined_h = pair_hemispheres(left_lstm_h, right_lstm_h)
+    combined_v = pair_hemispheres(left_lstm_v, right_lstm_v)
 
-    paired_features = pair_hemispheres(left_lstm, right_lstm)
+    # Reshape the combined outputs to add the time step dimension (1 time step here)
+    combined_h_reshaped = layers.Reshape((1, combined_h.shape[-1]))(combined_h)
+    combined_v_reshaped = layers.Reshape((1, combined_v.shape[-1]))(combined_v)
+
+    # Higher-level discrepancy feature extraction
+    combined_h_lstm = layers.LSTM(32)(combined_h_reshaped)
+    combined_v_lstm = layers.LSTM(32)(combined_v_reshaped)
+
+    # Final concatenation of horizontal and vertical
+    combined_final = layers.Concatenate()([combined_h_lstm, combined_v_lstm])
 
     # Final classification layer, 4 emotions: neutral, sad, fear, happy
-    output = layers.Dense(4, activation='softmax')(paired_features)
+    emotion_output = layers.Dense(4, activation='softmax', name="emotion_output")(combined_final)
 
-    model = models.Model(inputs=[input_left, input_right], outputs=output)
+    # Gradient Reversal Layer for adversarial training
+    grl = GradientReversalLayer(lambda_=lambda_val)(combined_final)
+
+    # Domain Discriminator (simple dense layers for domain classification)
+    domain_fc = layers.Dense(64, activation='relu')(grl)
+    domain_output = layers.Dense(1, activation='sigmoid', name="domain_output")(domain_fc)
+
+    model = models.Model(inputs=[input_left, input_right], outputs=[emotion_output, domain_output])
 
     # Define a learning rate schedule instead of using `decay`
     lr_schedule = ExponentialDecay(
-        initial_learning_rate=0.002,
+        initial_learning_rate=0.003,
         decay_steps=100000,
         decay_rate=0.95,
         staircase=True
@@ -78,26 +126,36 @@ def create_bi_hdm_model_as_paper(input_shape) -> models.Model:
 
     # optimizer = SGD(learning_rate=0.003, momentum=0.9, decay=0.95)
     optimizer = SGD(learning_rate=lr_schedule, momentum=0.9)
+    # model with two losses: emotion classification and domain classification
     model.compile(optimizer=optimizer,
-                  loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+                  loss={
+                      "emotion_output": "sparse_categorical_crossentropy",
+                      "domain_output": "binary_crossentropy"
+                  },
+                  metrics={
+                      "emotion_output": "accuracy",
+                      "domain_output": "accuracy"
+                  })
     return model
 
 
-def create_bi_hdm_lstm(input_shape, units, dropout=0.2, regular=None):
+def create_bi_hdm_lstm(input_shape, units, dropout=0.2, regular=None, first_seq=True, sec_seq=False):
     """
     Creates and define the bi_hdm model lstm section only
     :param input_shape:
     :param units:
     :param dropout:
     :param regular:
+    :param sec_seq:
+    :param first_seq:
     :return:
     """
 
     input_left = layers.Input(shape=input_shape)
-    lstm = layers.LSTM(units, return_sequences=True, kernel_regularizer=regular)(input_left)
+    lstm = layers.LSTM(units, return_sequences=first_seq, kernel_regularizer=regular)(input_left)
     lstm = layers.BatchNormalization()(lstm)
     lstm = layers.Dropout(dropout)(lstm)
-    lstm = layers.LSTM(units, return_sequences=True)(lstm)
+    lstm = layers.LSTM(units, return_sequences=sec_seq)(lstm)
     lstm = layers.BatchNormalization()(lstm)
     lstm = layers.Dropout(dropout)(lstm)
     return lstm, input_left
@@ -114,6 +172,7 @@ def bi_hdm_complete_model(temp_out, input_left, input_right, lr, regular=None, w
     :param weight_decay:
     :return:
     """
+    temp_out = tf.cast(temp_out, tf.float32)
     output = layers.Dense(4, activation='softmax', kernel_regularizer=regular)(temp_out)
 
     model = models.Model(inputs=[input_left, input_right], outputs=output)
@@ -133,36 +192,35 @@ def create_bi_hdm_model_improved(input_shape):
     right_lstm, input_right = create_bi_hdm_lstm(input_shape, 64, 0.3, regular)
 
     paired_features = pair_hemispheres(left_lstm, right_lstm)
-    # output = tf.keras.layers.Dense(4, activation='softmax')(paired_features)
 
     return bi_hdm_complete_model(paired_features, input_left, input_right, 0.0004)
 
 
 def create_bi_hdm_model_modified_attn(input_shape):
     # Left hemisphere LSTM
-    left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, dropout=0.2)
+    left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, 0.4, None, True, True)
 
     # Right hemisphere LSTM
-    right_lstm, input_right = create_bi_hdm_lstm(input_shape, 128, dropout=0.2)
+    right_lstm, input_right = create_bi_hdm_lstm(input_shape, 128, 0.4, None, True, True)
 
     # Attention Mechanism
-    attention = tf.keras.layers.Attention()([left_lstm, right_lstm])
+    attention = layers.Attention()([left_lstm, right_lstm])
     attn_out = layers.Flatten()(attention)
 
     regular = regularizers.l2(0.01)
-    return bi_hdm_complete_model(attn_out, input_left, input_right, 0.0005, regular, 1e-4)
+    return bi_hdm_complete_model(attn_out, input_left, input_right, 0.001, regular, 1e-4)
 
 
 def create_bi_hdm_model_modified_multi_head_att(input_shape):
     # Left hemisphere LSTM
-    left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, dropout=0.2)
+    left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, 0.5, None, True, True)
 
     # Right hemisphere LSTM
-    right_lstm, input_right = create_bi_hdm_lstm(input_shape, 128, dropout=0.2)
+    right_lstm, input_right = create_bi_hdm_lstm(input_shape, 128, 0.5, None, True, True)
 
-    attention = tf.keras.layers.MultiHeadAttention(num_heads=4, key_dim=64)
+    attention = layers.MultiHeadAttention(num_heads=4, key_dim=64)
     attention = attention(left_lstm, right_lstm)
-    attn_out = layers.GlobalAveragePooling1D(attention)
+    attn_out = layers.GlobalAveragePooling1D()(attention)
 
     regular = regularizers.l2(0.01)
     return bi_hdm_complete_model(attn_out, input_left, input_right, 0.0005, regular, 1e-5)
@@ -198,7 +256,7 @@ def plot_confusion_matrix_from_cm(conf_matrix):
     """
     class_names = ['Neutral', 'Sad', 'Fear', 'Happy']
     plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    sns.heatmap(conf_matrix, annot=True, fmt='.2f', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
     plt.xlabel('Predicted Labels')
     plt.ylabel('True Labels')
     plt.title('Confusion Matrix')
@@ -206,13 +264,93 @@ def plot_confusion_matrix_from_cm(conf_matrix):
 
 
 def plot_loss(train_loss, test_loss):
+    epochs = range(1, len(train_loss) + 1)  # Ensure x-axis starts at 1
+
+    plt.figure(figsize=(8, 6))  # Set the figure size
     plt.plot(train_loss, label='Training Loss')
     plt.plot(test_loss, label='Validation Loss')
     plt.title('Training and Validation Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
+    # plt.grid(True)
     plt.show()
+
+
+def evaluate_model_4_paper(eeg_data, labels, target_length, subjects, epochs, input_shape):
+    """
+    Leave-One-Subject-Out (LOSO) Cross-Validation for BiHDM model.
+
+    Parameters
+    ----------
+    eeg_data: ndarray
+        The EEG data with shape [n_samples, n_channels, n_time].
+
+    labels: ndarray
+        The labels corresponding to the EEG data.
+
+    target_length: int
+        The target length for the EEG data.
+
+    subjects: ndarray
+        An array identifying which subject each data point belongs to.
+
+    epochs: int
+        The number of epochs for training.
+    input_shape: set a set of fixed value (31, 64)
+
+    Returns
+    -------
+    Mean and standard deviation of accuracy across subjects.
+    """
+    logo = LeaveOneGroupOut()  # Leave-One-Subject-Out cross-validator
+    accuracies = []
+    confusion_matrices = []
+
+    for train_index, test_index in logo.split(eeg_data, labels, groups=subjects):
+        # Split the data into training and test sets
+        x_train, x_test = eeg_data[train_index], eeg_data[test_index]
+        y_train, y_test = labels[train_index], labels[test_index]
+
+        # Split into left and right hemispheres
+        left_train, right_train = prepare_bi_hdm_input(x_train, target_length)
+        left_test, right_test = prepare_bi_hdm_input(x_test, target_length)
+
+        # Create and compile the model
+        model = create_bi_hdm_model_as_paper(input_shape=input_shape, lambda_val=2)
+
+        # Train the model with early stopping
+        early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+        history = model.fit([left_train, right_train], y_train,
+                            epochs=epochs, batch_size=200,
+                            validation_split=0.2,
+                            callbacks=[early_stopping], verbose=0)
+
+        # Make predictions on the test set
+        y_pred = model.predict([left_test, right_test])[0]
+        y_pred_labels = np.argmax(y_pred, axis=1)
+
+        # Calculate accuracy and confusion matrix for the current subject
+        accuracy = accuracy_score(y_test, y_pred_labels)
+        accuracies.append(accuracy)
+        conf_matrix = confusion_matrix(y_test, y_pred_labels)
+        confusion_matrices.append(conf_matrix)
+        # Plot the loss using the history object
+        plot_loss(history.history['loss'], history.history['val_loss'])
+        # print(f"Subject {subjects[test_index][0]} - Accuracy: {accuracy:.4f}")
+
+    # Calculate mean accuracy and standard deviation across subjects
+    mean_accuracy = np.mean(accuracies)
+    std_accuracy = np.std(accuracies)
+
+    print(f"LOSO Cross-Validation - Mean Accuracy: {mean_accuracy:.4f}, STD: {std_accuracy:.4f}")
+
+    # Optionally, you can also average confusion matrices for better visualization
+    avg_conf_matrix = np.mean(confusion_matrices, axis=0)
+    plot_confusion_matrix_from_cm(avg_conf_matrix)
+    print(f"Confusion Matrix:\n{avg_conf_matrix}")
+
+    return mean_accuracy, std_accuracy
 
 
 def evaluate_model(eeg_data, labels, target_length, seed, epochs, model: models.Model):
@@ -243,19 +381,21 @@ def evaluate_model(eeg_data, labels, target_length, seed, epochs, model: models.
     # x_train_l, x_test_l, x_train_r, x_test_r, y_train, y_test = train_test_split(
     #    left_data, right_data, labels, test_size=0.2, random_state=seed)
 
-    x_train_l, x_test_l, y_train, y_test = train_test_split(left_data, labels, test_size=0.2, random_state=seed)
-    x_train_r, x_test_r, _, _ = train_test_split(right_data, labels, test_size=0.2, random_state=seed)
+    x_train_l, x_test_l, y_train, y_test \
+        = train_test_split(left_data, labels, test_size=0.2, random_state=seed)
+    x_train_r, x_test_r, _, _ \
+        = train_test_split(right_data, labels, test_size=0.2, random_state=seed)
 
     # Train the model between 50 and 100 with early stopping
-    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+    early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
     history = model.fit([x_train_l, x_train_r], y_train, epochs=epochs, batch_size=200,
                         validation_split=0.2,
-                        # class_weight=class_weights,
+                        class_weight=class_weights,
                         callbacks=[early_stopping], verbose=0)
 
     # Evaluate the model
     y_pred = model.predict([x_test_l, x_test_r])
-    y_pred_labels = np.argmax(y_pred, axis=1)
+    y_pred_labels = np.argmax(y_pred[0], axis=1)
 
     # Calculate accuracy and confusion matrix
     accuracy = accuracy_score(y_test, y_pred_labels)
@@ -317,7 +457,7 @@ def k_fold_cross_validation(eeg_data, labels, target_length, seed, epochs, n_spl
         class_weights = dict(enumerate(class_weights))
 
         # Train the model
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+        early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
         history = model.fit([x_train_l, x_train_r], y_train, epochs=epochs, batch_size=200,
                             validation_split=0.2, class_weight=class_weights, callbacks=[early_stopping])
 
@@ -347,23 +487,47 @@ def k_fold_cross_validation(eeg_data, labels, target_length, seed, epochs, n_spl
     return avg_accuracy, avg_conf_matrix
 
 
-def pre_process_data(data_file_name: str, label_file_name: str):
+def pre_process_data(data_file_name: str, label_file_name: str, sub_file_name: str):
+    """
+     Preprocess EEG data for LOSO cross-validation
+     Then save the eeg_data, labels and subject array
+    :param data_file_name: str, file name for eeg_data to be saved as numpy array
+    :param label_file_name: str, file name for label_data to be saved as numpy array
+    :param sub_file_name: str, file name for sub_array_data to be saved as numpy array
+    :return: None
+    """
     data_directory = 'data/eeg/eeg_raw_data'
     subjects = range(1, 16)  # 15 subjects (1 to 15)
     target_length = 64  # Max samples based on the new info for SEED-IV
     session_labels = get_session_labels()
     # labels = np.array(session_labels)
 
-    eeg_data, labels = load_and_preprocess_eeg_data(data_directory, subjects, session_labels, target_length)
+    grp_data, grp_labels = load_and_grp_eeg_by_sub(data_directory, subjects, session_labels, target_length)
+    eeg_data = np.concatenate([grp_data[subject] for subject in subjects], axis=0)
+    labels = np.concatenate([grp_labels[subject] for subject in subjects], axis=0)
+
+    # Generate subjects array for LOSO
+    sub_array = np.concatenate([[sub] * len(grp_data[sub]) for sub in subjects])
 
     np.save(data_file_name, eeg_data)  # Save as .npy file
     np.save(label_file_name, labels)  # Save as .npy file
+    np.save(sub_file_name, sub_array)  # Save as .npy file
 
 
-def load_processed_data(data_file_name: str, label_file_name: str) -> tuple[np.ndarray, np.ndarray]:
-    eeg_data = np.load(f'{data_file_name}')  # Save as .npy file
-    labels = np.load(f'{label_file_name}')  # Save as .npy file
-    return eeg_data, labels
+def load_processed_data(data_file_name: str,
+                        label_file_name: str,
+                        sub_file_name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+     Load processed EEG data for LOSO cross-validation
+    :param data_file_name: str, file name for eeg_data to be loaded as numpy array
+    :param label_file_name: str, file name for label_data to be loaded as numpy array
+    :param sub_file_name: str, file name for sub_array_data to be loaded as numpy array
+    :return:
+    """
+    eeg_data = np.load(f'{data_file_name}')
+    labels = np.load(f'{label_file_name}')
+    sub_array = np.load(f'{sub_file_name}')
+    return eeg_data, labels, sub_array
 
 
 def main():
@@ -375,30 +539,44 @@ def main():
     seed = 4
     np.random.seed(seed)
     tf.random.set_seed(seed)
-    # pre_process_data((pre_proc_loc + pre_proc_data_file), (pre_proc_loc + pre_proc_label_file))
-    eeg_data, labels = load_processed_data((pre_proc_loc + pre_proc_data_file), (pre_proc_loc + pre_proc_label_file))
+    data_f_nm = pre_proc_loc + pre_proc_data_file
+    label_f_nm = pre_proc_loc + pre_proc_label_file
+    subject_f_nm = pre_proc_loc + pre_proc_sub_file
+
+    # pre_process_data(data_f_nm, label_f_nm, subject_f_nm)
+    eeg_data, labels, subject_arr = load_processed_data(data_f_nm, label_f_nm, subject_f_nm)
 
     print(f'EEG Data Shape: {eeg_data.shape}')  # (Total trials, channels, time points)
     print(f'Labels Shape: {labels.shape}')  # (Total trials,)
+    print(f'Subject Array Shape: {subject_arr.shape}')  # (Total Subjects)
 
     target_length = 64
     input_shape = (31, target_length)  # 31 electrodes, 64 time points
+    # Generate subjects array for LOSO
+
+    # Create the BiHDM model original
+    print(f"BiHDM model 32 unit paper based")
+    mean_acc, std_acc = evaluate_model_4_paper(eeg_data, labels, target_length, subject_arr, 50, input_shape)
+    print(f"mean_acc: {mean_acc}, std_acc: {std_acc}")
+
     # Create the BiHDM model improved
-    model = create_bi_hdm_model_modified_multi_head_att(input_shape)
-    evaluate_model(eeg_data, labels, target_length, seed, 40, model)
+    print(f"BiHDM model improved 64 unit analysis")
+    # model = create_bi_hdm_model_improved(input_shape)
+    # evaluate_model(eeg_data, labels, target_length, seed, 50, model)
 
     # Create the BiHDM model attn
-    model = create_bi_hdm_model_modified_multi_head_att(input_shape)
-    evaluate_model(eeg_data, labels, target_length, seed, 40, model)
+    print(f"BiHDM model attn analysis")
+    # model = create_bi_hdm_model_modified_attn(input_shape)
+    # evaluate_model(eeg_data, labels, target_length, seed, 40, model)
 
     # Create the BiHDM model multi head attn
-    model = create_bi_hdm_model_modified_multi_head_att(input_shape)
-    evaluate_model(eeg_data, labels, target_length, seed, 40, model)
+    print(f"BiHDM model multi head attn analysis")
+    # model = create_bi_hdm_model_modified_multi_head_att(input_shape)
+    # evaluate_model(eeg_data, labels, target_length, seed, 40, model)
     # k_fold_cross_validation(eeg_data, labels, 64, seed, 60)
 
 
 if __name__ == '__main__':
-    # print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     physical_devices = tf.config.experimental.list_physical_devices('GPU')
     if len(physical_devices) > 0:
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
