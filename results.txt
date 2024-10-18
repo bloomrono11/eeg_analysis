@@ -1,0 +1,5 @@
+input_shape: (64, 310)
+EEG Data Shape: (24, 62, 64, 5), Label Shape: (24,), EEG Data ReShape: (24, 64, 310), File: 1'-'10_20151014.mat, Accuracy: 0.4000000059604645, Loss: 2.361353635787964
+EEG Data Shape: (24, 62, 60, 5), Label Shape: (24,), EEG Data ReShape: (24, 64, 310), File: 2'-'10_20151021.mat, Accuracy: 0.0, Loss: 1.641741156578064
+EEG Data Shape: (24, 62, 64, 5), Label Shape: (24,), EEG Data ReShape: (24, 64, 310), File: 3'-'10_20151023.mat, Accuracy: 0.6000000238418579, Loss: 1.1974714994430542
+Average Test Accuracy: 0.3333333432674408, Loss: 0.3333333432674408
