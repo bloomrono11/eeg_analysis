@@ -146,7 +146,7 @@ def load_n_merge_raw_data(dir_path: str) -> ndarray[Any, dtype[Any]]:
 
 def main():
     # For EEG CNN 2D with TL
-    eeg_data = load_n_merge_raw_data('data/eeg/eeg_raw_data/1')
+    eeg_data = load_n_merge_raw_data('../data/eeg/eeg_raw_data/1')
     print(f"eeg_data.shape: {eeg_data.shape}")
 
 

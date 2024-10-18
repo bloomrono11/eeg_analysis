@@ -1,7 +1,8 @@
-import keras.src.layers as ksl
+
 import numpy as np
 from keras import Sequential
-from keras.src.backend.common.global_state import clear_session
+from tensorflow.keras import layers as ksl
+from tensorflow.keras.backend import clear_session
 
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler

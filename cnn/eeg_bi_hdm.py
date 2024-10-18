@@ -11,7 +11,7 @@ from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 
 from eeg_bi_hdm_pre_process import load_and_grp_eeg_by_sub
-from eeg_mat_load import get_session_labels
+from cnn.eeg_mat_load import get_session_labels
 
 pre_proc_loc = 'data/pre-processed/eeg/bi_hdm/'
 pre_proc_data_file = 'feature_data.npy'

@@ -4,7 +4,7 @@ import numpy as np
 from scipy.io import loadmat
 from scipy.signal import butter, lfilter
 
-from eeg_mat_load import get_session_labels
+from cnn.eeg_mat_load import get_session_labels
 
 
 # Bi HDM
@@ -144,7 +144,7 @@ def load_and_grp_eeg_by_sub(data_dir, subjects, session_labels, target_length, f
 
 def main():
     # Load EEG data and preprocess
-    data_directory = 'data/eeg/eeg_raw_data'
+    data_directory = '../data/eeg/eeg_raw_data'
     subjects = range(1, 16)  # 15 subjects (1 to 15)
     target_length = 64  # Max samples based on the new info for SEED-IV
     grp_data, grp_labels = load_and_grp_eeg_by_sub(data_directory, subjects, get_session_labels(),

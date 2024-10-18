@@ -5,7 +5,7 @@ from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from eeg_mat_load import get_fixed_params, load_n_classify
+from cnn.eeg_mat_load import get_fixed_params, load_n_classify
 from egg_cnn_models import create_cnn1d_model, create_cnn2d_model, create_cnn3d_model
 from egg_cnn_models import reshape_eeg_data_for_cnn1d, reshape_eeg_data_for_cnn2d, reshape_eeg_data_for_cnn3d
 
@@ -167,9 +167,9 @@ def evaluate_model_with_confusion_matrix(model, y_true, eeg_data_reshaped):
 def main():
     # model = create_cnn3d_model(input_shape=(64, 62, 5, 1))
     # model.summary()
-    with (open("results_cnn1d.txt", "w") as res_cnn1,
-          open("results_cnn2d.txt", "w") as res_cnn2,
-          open("results_cnn3d.txt", "w") as res_cnn3):
+    with (open("../results_cnn1d.txt", "w") as res_cnn1,
+          open("../results_cnn2d.txt", "w") as res_cnn2,
+          open("../results_cnn3d.txt", "w") as res_cnn3):
         perform_cnn(res_cnn1, res_cnn2, res_cnn3)
 
 

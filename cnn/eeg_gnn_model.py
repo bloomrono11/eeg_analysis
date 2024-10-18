@@ -8,13 +8,12 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import kneighbors_graph
-from sklearn.utils import compute_class_weight
 from torch.utils.data import random_split
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool, SAGEConv
 
-from eeg_mat_load import load_n_classify, get_fixed_params
+from cnn.eeg_mat_load import load_n_classify, get_fixed_params
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 eeg_channels = 62

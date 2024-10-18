@@ -33,7 +33,7 @@ def re_process_data():
 
     start_time = time.time()
 
-    eeg_data = load_n_merge_raw_data('data/eeg/eeg_raw_data/1')
+    eeg_data = load_n_merge_raw_data('../data/eeg/eeg_raw_data/1')
     print(f"eeg_data.shape: {eeg_data.shape}")
     fs = 200  # from paper
     all_features = extract_features_from_all_channels(eeg_data, fs)
