@@ -1,17 +1,63 @@
-Requires
+# What is this repo about?
 
-tensorflow 2.11.0
-keras 2.11.0
-pandas 2.1.0
-numpy 1.26.0
-scikit-learn 1.4.2
-seaborn 0.12.2
-mne 1.7.0
-torch 2.1.0
-torch-lightning 2.0.0
-torch_geometric 2.1.0
-torchmetrics 1.4.3
+Understand and evaluating various eeg algorithms from papers for seed IV dataset
 
+## Eeg analysis
+ Other python files exist which showcase how to perform ML models and learning using various eeg data and stuff
+ **todo**: organize the file structure
+
+## Seed 4 dataset
+
+Details regarding Seed 4 data [Link](https://bcmi.sjtu.edu.cn/~seed/seed-iv.html)
+Subjects: 15
+Channels: 62
+Trails for each subject: 24
+Emotion Labels/Classifications/number of classes: 4
+male:1、2、6、7、12、13
+female:3、4、5、8、9、10、11、14、15
+
+Label:
+The labels of the three sessions for the same subjects are as follows,
+session1_label = [1,2,3,0,2,0,0,1,0,1,2,1,1,1,2,3,2,2,3,3,0,3,0,3];
+session2_label = [2,1,3,0,0,2,0,2,3,3,2,3,2,0,1,1,2,1,0,3,0,1,3,1];
+session3_label = [1,2,2,1,3,3,3,1,1,2,1,0,2,3,3,0,2,3,0,0,2,0,1,0];
+
+The labels with 0, 1, 2, and 3 denote the ground truth, neutral, sad, fear, and happy emotions, respectively.
+
+Trails for each subject 24
+Channels 64
+
+### Seed 4 raw
+Data keys from mat files
+the xx is replaced with each subject 2 charater initials
+EEG Data keys: dict_keys(['__header__', '__version__', '__globals__',
+ 'xx_eeg1', 
+ 'xx_eeg2', 
+ 'xx_eeg3', 
+ 'xx_eeg4', 
+ 'xx_eeg5', 
+ 'xx_eeg6', 
+ 'xx_eeg7', 
+ 'xx_eeg8', 
+ 'xx_eeg9', 
+ 'xx_eeg10', 
+ 'xx_eeg11', 
+ 'xx_eeg12', 
+ 'xx_eeg13', 
+ 'xx_eeg14', 
+ 'xx_eeg15', 
+ 'xx_eeg16', 
+ 'xx_eeg17',
+ 'xx_eeg18', 
+ 'xx_eeg19', 
+ 'xx_eeg20', 
+ 'xx_eeg21',
+ 'xx_eeg22', 
+ 'xx_eeg23', 
+ 'xx_eeg24'
+
+### Seed 4 Smooth
+Data keys from mat files
 EEG Data keys: dict_keys(['__header__', '__version__', '__globals__',
  'de_movingAve1', 'de_LDS1', 'psd_movingAve1', 'psd_LDS1',
  'de_movingAve2', 'de_LDS2', 'psd_movingAve2', 'psd_LDS2',
