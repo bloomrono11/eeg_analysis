@@ -10,13 +10,8 @@ from tensorflow.keras import layers, models, optimizers, regularizers, callbacks
 from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 
-from eeg_bi_hdm_pre_process import load_and_grp_eeg_by_sub
+from eeg_bi_hdm_pre_process import load_and_grp_eeg_by_sub, load_processed_data
 from cnn.eeg_mat_load import get_session_labels
-
-pre_proc_loc = 'data/pre-processed/eeg/bi_hdm/'
-pre_proc_data_file = 'feature_data.npy'
-pre_proc_label_file = 'feature_label.npy'
-pre_proc_sub_file = 'feature_subject_array.npy'
 
 
 class GradientReversalLayer(layers.Layer):
@@ -197,6 +192,11 @@ def create_bi_hdm_model_improved(input_shape):
 
 
 def create_bi_hdm_model_modified_attn(input_shape):
+    """
+     Modified model for improving the accuracy of the BiHDM model using Attention
+    :param input_shape: The shape of the nd array of the input vectors
+    :return: the model using Attention and LSTM
+    """
     # Left hemisphere LSTM
     left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, 0.4, None, True, True)
 
@@ -212,6 +212,11 @@ def create_bi_hdm_model_modified_attn(input_shape):
 
 
 def create_bi_hdm_model_modified_multi_head_att(input_shape):
+    """
+     Modified model for improving the accuracy of the BiHDM model using Multi Head Attention
+    :param input_shape: The shape of the nd array of the input vectors
+    :return: the model using Multi Head Attention and LSTM
+    """
     # Left hemisphere LSTM
     left_lstm, input_left = create_bi_hdm_lstm(input_shape, 128, 0.5, None, True, True)
 
@@ -487,49 +492,6 @@ def k_fold_cross_validation(eeg_data, labels, target_length, seed, epochs, n_spl
     return avg_accuracy, avg_conf_matrix
 
 
-def pre_process_data(data_file_name: str, label_file_name: str, sub_file_name: str):
-    """
-     Preprocess EEG data for LOSO cross-validation
-     Then save the eeg_data, labels and subject array
-    :param data_file_name: str, file name for eeg_data to be saved as numpy array
-    :param label_file_name: str, file name for label_data to be saved as numpy array
-    :param sub_file_name: str, file name for sub_array_data to be saved as numpy array
-    :return: None
-    """
-    data_directory = 'data/eeg/eeg_raw_data'
-    subjects = range(1, 16)  # 15 subjects (1 to 15)
-    target_length = 64  # Max samples based on the new info for SEED-IV
-    session_labels = get_session_labels()
-    # labels = np.array(session_labels)
-
-    grp_data, grp_labels = load_and_grp_eeg_by_sub(data_directory, subjects, session_labels, target_length)
-    eeg_data = np.concatenate([grp_data[subject] for subject in subjects], axis=0)
-    labels = np.concatenate([grp_labels[subject] for subject in subjects], axis=0)
-
-    # Generate subjects array for LOSO
-    sub_array = np.concatenate([[sub] * len(grp_data[sub]) for sub in subjects])
-
-    np.save(data_file_name, eeg_data)  # Save as .npy file
-    np.save(label_file_name, labels)  # Save as .npy file
-    np.save(sub_file_name, sub_array)  # Save as .npy file
-
-
-def load_processed_data(data_file_name: str,
-                        label_file_name: str,
-                        sub_file_name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-     Load processed EEG data for LOSO cross-validation
-    :param data_file_name: str, file name for eeg_data to be loaded as numpy array
-    :param label_file_name: str, file name for label_data to be loaded as numpy array
-    :param sub_file_name: str, file name for sub_array_data to be loaded as numpy array
-    :return:
-    """
-    eeg_data = np.load(f'{data_file_name}')
-    labels = np.load(f'{label_file_name}')
-    sub_array = np.load(f'{sub_file_name}')
-    return eeg_data, labels, sub_array
-
-
 def main():
     """
          Main method to load and preprocess eeg data as per the BiHDM model
@@ -539,12 +501,8 @@ def main():
     seed = 4
     np.random.seed(seed)
     tf.random.set_seed(seed)
-    data_f_nm = pre_proc_loc + pre_proc_data_file
-    label_f_nm = pre_proc_loc + pre_proc_label_file
-    subject_f_nm = pre_proc_loc + pre_proc_sub_file
 
-    # pre_process_data(data_f_nm, label_f_nm, subject_f_nm)
-    eeg_data, labels, subject_arr = load_processed_data(data_f_nm, label_f_nm, subject_f_nm)
+    eeg_data, labels, subject_arr = load_processed_data()
 
     print(f'EEG Data Shape: {eeg_data.shape}')  # (Total trials, channels, time points)
     print(f'Labels Shape: {labels.shape}')  # (Total trials,)
